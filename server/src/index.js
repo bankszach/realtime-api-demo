@@ -52,40 +52,36 @@ app.post('/session', async (req, res) => {
 
     const { model = 'gpt-realtime', voice = 'marin' } = req.body || {};
 
-    // Create an ephemeral client secret with session defaults.
-    const body = {
-      model,
-      voice,
-      modalities: ['text', 'audio']
-    };
-
-    const resp = await fetch('https://api.openai.com/v1/realtime/sessions', {
+    const upstream = await fetch('https://api.openai.com/v1/realtime/sessions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
         'OpenAI-Beta': 'realtime=v1'
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify({
+        model,
+        voice,
+        modalities: ['text', 'audio']
+      })
     });
 
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => '');
-      return res.status(resp.status).json({ error: 'Failed to create client secret', details: errText });
+    const text = await upstream.text();
+    console.log('[sessions] status', upstream.status, text.slice(0, 200));
+
+    if (!upstream.ok) {
+      return res.status(upstream.status).json({ error: 'sessions_failed', details: text.slice(0, 300) });
     }
 
-    const data = await resp.json();
-    const value = (
-      (typeof data?.client_secret === 'string' && data.client_secret) ||
-      data?.client_secret?.value ||
-      data?.value ||
-      null
-    );
-    if (!value) {
-      return res.status(500).json({ error: 'No client_secret in response', raw: data });
-    }
+    let data;
+    try { data = JSON.parse(text); } catch (_) { data = {}; }
 
-    // Return only the ephemeral client secret value to the client
+    const value = (typeof data?.client_secret === 'string')
+      ? data.client_secret
+      : data?.client_secret?.value;
+
+    if (!value) return res.status(500).json({ error: 'missing_client_secret' });
+
     res.json({ client_secret: value, model, voice });
   } catch (err) {
     res.status(500).json({ error: 'Unexpected error', details: String(err?.message || err) });

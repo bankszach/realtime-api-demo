@@ -65,7 +65,7 @@ export async function connectAgent({
   ];
 
   // 3) Start a realtime session (browser = WebRTC)
-  const session = new RealtimeSession(agent, { model });
+  const session = new RealtimeSession(agent, { model, voice });
 
   // Events (transcripts + debug)
   session.on("response.delta", (e) => {
@@ -95,6 +95,9 @@ export async function connectAgent({
 
   // 4) Connect (this will attach mic + speaker automatically)
   await session.connect({ apiKey: client_secret });
+  if (typeof session.update === 'function') {
+    try { await session.update({ voice }); } catch (_) {}
+  }
 
   // Control helpers
   return {
@@ -107,4 +110,3 @@ export async function connectAgent({
     }
   };
 }
-
