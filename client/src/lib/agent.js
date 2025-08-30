@@ -1,4 +1,4 @@
-import { RealtimeAgent, RealtimeSession } from "@openai/agents-realtime";
+import { RealtimeAgent, RealtimeSession, OpenAIRealtimeWebRTC } from "@openai/agents-realtime";
 
 /**
  * Connects a browser Realtime session via Agents SDK.
@@ -64,8 +64,18 @@ export async function connectAgent({
     }
   ];
 
-  // 3) Start a realtime session (browser = WebRTC)
-  const session = new RealtimeSession(agent, { model, voice });
+  // 3) Explicit WebRTC transport (belt-and-suspenders)
+  const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const audioElement = document.createElement('audio');
+  audioElement.autoplay = true;
+  audioElement.playsInline = true;
+  // Keep it lightweight: do not style; append to body so audio can play
+  document.body.appendChild(audioElement);
+
+  const transport = new OpenAIRealtimeWebRTC({ mediaStream, audioElement });
+
+  // Start a realtime session with explicit transport
+  const session = new RealtimeSession(agent, { model, voice, transport });
 
   // Events (transcripts + debug)
   session.on("response.delta", (e) => {
@@ -106,7 +116,9 @@ export async function connectAgent({
       session.setMicrophoneEnabled(Boolean(enabled));
     },
     close() {
-      session.disconnect();
+      try { session.disconnect(); } catch (_) {}
+      try { mediaStream.getTracks().forEach(t => t.stop()); } catch (_) {}
+      try { audioElement.remove(); } catch (_) {}
     }
   };
 }

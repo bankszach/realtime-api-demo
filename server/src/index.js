@@ -50,9 +50,11 @@ app.post('/session', async (req, res) => {
       return res.status(500).json({ error: 'Server not configured: missing OPENAI_API_KEY' });
     }
 
-    const { model = 'gpt-realtime', voice = 'marin' } = req.body || {};
+    const { model = 'gpt-4o-realtime-preview', voice = 'marin' } = req.body || {};
 
-    const upstream = await fetch('https://api.openai.com/v1/realtime/sessions', {
+    // Create a Realtime session (returns an ephemeral client_secret)
+    const endpoint = 'https://api.openai.com/v1/realtime/sessions';
+    const upstream = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -78,7 +80,7 @@ app.post('/session', async (req, res) => {
 
     const value = (typeof data?.client_secret === 'string')
       ? data.client_secret
-      : data?.client_secret?.value;
+      : (data?.client_secret?.value || data?.value);
 
     if (!value) return res.status(500).json({ error: 'missing_client_secret' });
 

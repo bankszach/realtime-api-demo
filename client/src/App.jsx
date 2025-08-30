@@ -15,10 +15,16 @@ export default function App() {
   const [transcript, setTranscript] = useState([]);
   const [logs, setLogs] = useState([]);
   const sessionRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
 
   const pushLog = useCallback((line) => setLogs((l) => [...l, String(line)]), []);
 
   const connect = useCallback(async () => {
+    // Clear any pending auto-reconnect before starting a new connect
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     setConnecting(true);
     setLogs([]);
     setTranscript([]);
@@ -40,6 +46,18 @@ export default function App() {
       controller.enableMic(true);
       const ts = new Date().toISOString();
       pushLog(`Session started @ ${ts} model=${model} voice=${voice}`);
+
+      // Schedule auto-reconnect slightly before ephemeral expiry (~60s). Use 55s.
+      reconnectTimerRef.current = setTimeout(async () => {
+        try {
+          pushLog('Auto-reconnect: refreshing ephemeral session');
+          sessionRef.current?.close();
+          setConnected(false);
+          await connect();
+        } catch (e) {
+          pushLog(`Auto-reconnect error: ${e?.message || e}`);
+        }
+      }, 55 * 1000);
     } catch (err) {
       pushLog(`Connect error: ${err?.message || err}`);
       setConnected(false);
@@ -61,17 +79,37 @@ export default function App() {
   useEffect(() => {
     return () => {
       sessionRef.current?.close();
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
     };
   }, []);
 
+  const status = connecting ? 'Connecting' : connected ? (micEnabled ? 'Live' : 'Connected') : 'Idle';
+  const statusColor = status === 'Live' ? '#0fa36b' : status === 'Connecting' ? '#f59e0b' : status === 'Connected' ? '#3b82f6' : '#6b7280';
+
   return (
     <div className="wrap">
-      <h2 style={{ margin: 0 }}>Realtime Voice Agent Demo</h2>
+      <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+        <h2 style={{ margin: 0 }}>Realtime Voice Agent Demo</h2>
+        <span style={{
+          display: 'inline-block',
+          padding: '2px 8px',
+          borderRadius: 999,
+          background: statusColor,
+          color: 'white',
+          fontSize: 12,
+          minWidth: 72,
+          textAlign: 'center'
+        }}>{status}</span>
+      </div>
       <div className="row">
         <label>
           Model:
           <select value={model} onChange={(e) => setModel(e.target.value)} style={{ marginLeft: 8 }}>
             <option value="gpt-realtime">gpt-realtime</option>
+            <option value="gpt-4o-realtime-preview">gpt-4o-realtime-preview</option>
           </select>
         </label>
         <label style={{ marginLeft: 16 }}>
