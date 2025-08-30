@@ -52,22 +52,19 @@ app.post('/session', async (req, res) => {
 
     const { model = 'gpt-realtime', voice = 'marin' } = req.body || {};
 
-    // Prefer session envelope for forward compatibility
+    // Create an ephemeral client secret with session defaults.
     const body = {
-      session: {
-        type: 'realtime',
-        model,
-        voice,
-        modalities: ['text', 'audio']
-        // Tools are handled client-side for the demo via Agents SDK tool handler
-      }
+      model,
+      voice,
+      modalities: ['text', 'audio']
     };
 
-    const resp = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
+    const resp = await fetch('https://api.openai.com/v1/realtime/sessions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'OpenAI-Beta': 'realtime=v1'
       },
       body: JSON.stringify(body)
     });
@@ -78,9 +75,14 @@ app.post('/session', async (req, res) => {
     }
 
     const data = await resp.json();
-    const value = data?.client_secret?.value;
+    const value = (
+      (typeof data?.client_secret === 'string' && data.client_secret) ||
+      data?.client_secret?.value ||
+      data?.value ||
+      null
+    );
     if (!value) {
-      return res.status(500).json({ error: 'No client_secret.value in response' });
+      return res.status(500).json({ error: 'No client_secret in response', raw: data });
     }
 
     // Return only the ephemeral client secret value to the client
