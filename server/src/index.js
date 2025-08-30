@@ -1,26 +1,50 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { toolDefinitions } from './tools.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(express.json());
-app.use(cors({
-  origin: [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173'
-  ],
-  credentials: true
-}));
+
+// Configure CORS allowlist (supports comma-separated env CORS_ORIGINS)
+const defaultOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173'
+];
+const extraOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+const corsOrigins = [...defaultOrigins, ...extraOrigins];
+app.use(cors({ origin: corsOrigins, credentials: true }));
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
+// naive in-memory rate limit: 10/min/IP
+const rlBucket = new Map();
+function rateLimited(ip) {
+  const now = Date.now();
+  const windowMs = 60_000;
+  const max = 10;
+  const entry = rlBucket.get(ip) || { count: 0, reset: now + windowMs };
+  if (now > entry.reset) {
+    entry.count = 0;
+    entry.reset = now + windowMs;
+  }
+  entry.count += 1;
+  rlBucket.set(ip, entry);
+  return entry.count > max;
+}
+
 app.post('/session', async (req, res) => {
   try {
+    const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+    if (rateLimited(ip)) {
+      return res.status(429).json({ error: 'Rate limit exceeded' });
+    }
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: 'Server not configured: missing OPENAI_API_KEY' });
@@ -28,12 +52,15 @@ app.post('/session', async (req, res) => {
 
     const { model = 'gpt-realtime', voice = 'marin' } = req.body || {};
 
+    // Prefer session envelope for forward compatibility
     const body = {
-      model,
-      voice,
-      modalities: ['text', 'audio'],
-      // Expose a trivial tool that the agent can call.
-      tools: toolDefinitions
+      session: {
+        type: 'realtime',
+        model,
+        voice,
+        modalities: ['text', 'audio']
+        // Tools are handled client-side for the demo via Agents SDK tool handler
+      }
     };
 
     const resp = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
@@ -66,4 +93,3 @@ app.post('/session', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Auth service listening on http://localhost:${PORT}`);
 });
-

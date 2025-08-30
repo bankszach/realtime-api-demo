@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import MicToggle from './components/MicToggle.jsx';
 import Transcript from './components/Transcript.jsx';
 import LogPanel from './components/LogPanel.jsx';
-import { connectRealtime } from './lib/realtime.js';
+import { connectAgent } from './lib/agent.js';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
 
@@ -14,57 +14,39 @@ export default function App() {
   const [model, setModel] = useState('gpt-realtime');
   const [transcript, setTranscript] = useState([]);
   const [logs, setLogs] = useState([]);
-  const audioRef = useRef(null);
   const sessionRef = useRef(null);
 
   const pushLog = useCallback((line) => setLogs((l) => [...l, String(line)]), []);
-
-  const onTranscript = useCallback((msg) => {
-    // Basic transcript handling placeholder
-    const text = msg?.delta || msg?.text || msg?.content || JSON.stringify(msg);
-    if (!text) return;
-    setTranscript((list) => [...list, { text, final: /final|completed/i.test(msg?.type || '') }]);
-  }, []);
-
-  const onTrack = useCallback((remoteStream) => {
-    if (audioRef.current) {
-      audioRef.current.srcObject = remoteStream;
-      audioRef.current.play().catch(() => {});
-    }
-  }, []);
 
   const connect = useCallback(async () => {
     setConnecting(true);
     setLogs([]);
     setTranscript([]);
     try {
-      const r = await fetch(`${SERVER_URL}/session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, voice })
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const { client_secret } = await r.json();
-      if (!client_secret) throw new Error('Missing client_secret');
-
-      const session = await connectRealtime({
-        ephemeralKey: client_secret,
+      const controller = await connectAgent({
+        serverUrl: SERVER_URL,
         model,
-        onTrack,
-        onTranscript,
+        voice,
+        onTranscript: (msg) => {
+          const text = msg?.text || msg?.delta || '';
+          if (!text) return;
+          setTranscript((list) => [...list, { text, final: !!msg.final }]);
+        },
         onLog: (m) => pushLog(m)
       });
-      sessionRef.current = session;
+      sessionRef.current = controller;
       setConnected(true);
       setMicEnabled(true);
-      session.enableMic(true);
+      controller.enableMic(true);
+      const ts = new Date().toISOString();
+      pushLog(`Session started @ ${ts} model=${model} voice=${voice}`);
     } catch (err) {
       pushLog(`Connect error: ${err?.message || err}`);
       setConnected(false);
     } finally {
       setConnecting(false);
     }
-  }, [SERVER_URL, model, voice, onTrack, onTranscript, pushLog]);
+  }, [SERVER_URL, model, voice, pushLog]);
 
   const toggleMic = useCallback(async () => {
     if (!connected) {
@@ -96,11 +78,35 @@ export default function App() {
           Voice:
           <select value={voice} onChange={(e) => setVoice(e.target.value)} style={{ marginLeft: 8 }}>
             <option value="marin">marin</option>
+            <option value="cedar">cedar</option>
           </select>
         </label>
       </div>
 
       <MicToggle connected={connected} connecting={connecting} micEnabled={micEnabled} onToggle={toggleMic} />
+
+      <div className="row" style={{ marginTop: 8 }}>
+        <button onClick={async () => {
+          try {
+            const r = await fetch(`${SERVER_URL}/health`);
+            const j = await r.json().catch(() => ({}));
+            pushLog(`Health: ${r.status} ${JSON.stringify(j)}`);
+          } catch (e) {
+            pushLog(`Health error: ${e?.message || e}`);
+          }
+        }}>Ping Server Health</button>
+        {connected && (
+          <button style={{ marginLeft: 8 }} disabled={connecting} onClick={async () => {
+            try {
+              sessionRef.current?.close();
+              setConnected(false);
+              await connect();
+            } catch (e) {
+              pushLog(`Reconnect error: ${e?.message || e}`);
+            }
+          }}>Reconnect</button>
+        )}
+      </div>
 
       <div className="panes">
         <div className="panel">
@@ -113,8 +119,7 @@ export default function App() {
         </div>
       </div>
 
-      <audio ref={audioRef} autoPlay />
+      {/* Audio element not needed with Agents SDK; it manages audio out */}
     </div>
   );
 }
-
